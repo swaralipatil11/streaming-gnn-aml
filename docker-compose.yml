@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  gnn-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aml_gnn_container
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mounts the local trained model checkpoint so the container always uses the latest weights
+      - ./aml_gcn_model.pth:/app/aml_gcn_model.pth
+    restart: unless-stopped

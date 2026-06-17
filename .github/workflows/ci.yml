@@ -1,0 +1,59 @@
+name: AML GNN CI Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Cache Pip Packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential curl
+
+    - name: Install PyTorch (CPU)
+      run: |
+        python -m pip install --upgrade pip
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+    - name: Install Project Dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Download Small Test Dataset
+      run: |
+        # Creates the dataset directory and mock/downloads a tiny CSV for testing
+        mkdir -p dataset
+        # Write a minimal mock CSV dataset for integration test to run successfully in CI
+        cat <<EOF > dataset/HI-Small_Trans.csv
+        Timestamp,From Bank,Account,To Bank,Account.1,Amount Received,Receiving Currency,Payment Format,Is Laundering
+        2022/09/01 00:00,10,ACC_100,10,ACC_101,1000.0,US Dollar,Wire,0
+        2022/09/01 00:01,10,ACC_101,20,ACC_200,950.0,US Dollar,Wire,1
+        2022/09/01 00:02,20,ACC_200,10,ACC_100,900.0,US Dollar,Wire,1
+        2022/09/01 00:03,30,ACC_300,40,ACC_400,150.0,US Dollar,Cash,0
+        EOF
+
+    - name: Run Integration Test Pipeline
+      run: |
+        python test_pipeline.py
