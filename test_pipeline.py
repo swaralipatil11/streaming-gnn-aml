@@ -37,28 +37,52 @@ def run_integration_test():
         "--port", "8085"
     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     
-    # Wait for server to startup
-    print("Waiting 3 seconds for server to start...")
-    time.sleep(3)
-    
-    # Check if server process is still alive
-    if server_process.poll() is not None:
-        print("Error: FastAPI server failed to start!")
-        stdout, stderr = server_process.communicate()
-        print("stdout:", stdout)
-        print("stderr:", stderr)
-        sys.exit(1)
-        
+    # Wait for server to startup using a robust retry loop (up to 15 seconds)
+    print("Waiting for server to start and become responsive...")
     base_url = "http://127.0.0.1:8085"
+    server_ready = False
+    
+    for i in range(15):
+        time.sleep(1)
+        # Check if server process is still alive
+        if server_process.poll() is not None:
+            print("Error: FastAPI server failed to start!")
+            stdout, stderr = server_process.communicate()
+            print("stdout:", stdout)
+            print("stderr:", stderr)
+            sys.exit(1)
+            
+        try:
+            response = requests.get(f"{base_url}/", timeout=1)
+            if response.status_code == 200:
+                server_ready = True
+                print(f"Server is responsive after {i+1} seconds.")
+                break
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            pass
+            
+    if not server_ready:
+        print("Error: FastAPI server did not become responsive within timeout!")
+        server_process.terminate()
+        server_process.wait()
+        sys.exit(1)
     
     try:
         # 1. Test Root Endpoint
         print("\nChecking Root Endpoint...")
         response = requests.get(f"{base_url}/")
         print(f"Status: {response.status_code}")
-        print(f"Response: {response.json()}")
         assert response.status_code == 200
-        assert response.json()["model_loaded"] is True
+        
+        # Root endpoint can return either JSON status payload or HTML React client
+        content_type = response.headers.get("Content-Type", "")
+        if "application/json" in content_type:
+            data = response.json()
+            print(f"Response (JSON): {data}")
+            assert data["model_loaded"] is True
+        else:
+            print("Response served HTML frontend dashboard (production mode).")
+            assert "<html" in response.text.lower() or "<div id=\"root\"" in response.text.lower()
         
         # 2. Test predict_anomaly Endpoint (Raw Graph Tensors)
         print("\nChecking /predict_anomaly Endpoint...")
