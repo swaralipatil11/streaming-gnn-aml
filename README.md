@@ -8,6 +8,8 @@ An interactive, high-throughput, graph-native diagnostics platform designed to i
 
 The application comprises three core components: the GNN model pipeline, the FastAPI REST endpoint, and the React-based visual dashboard.
 
+![System Architecture Diagram](system_architecture_diagram.png)
+
 ```mermaid
 graph TD
     %% Dataset/Ingestion Section
