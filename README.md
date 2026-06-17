@@ -11,27 +11,27 @@ The application comprises three core components: the GNN model pipeline, the Fas
 ```mermaid
 graph TD
     %% Dataset/Ingestion Section
-    subgraph Data Ingestion & Engineering
+    subgraph data_ingestion ["Data Ingestion & Engineering"]
         CSV["Raw Transaction CSVs<br/>(dataset/HI-Small_Trans.csv)"]
         Builder["StreamGraphBuilder<br/>(dataset.py)"]
         Graph["PyTorch Geometric Graph Data<br/>(x: Node features, edge_index)"]
     end
 
     %% Model & Training Section
-    subgraph GNN Machine Learning Pipeline
+    subgraph gnn_pipeline ["GNN Machine Learning Pipeline"]
         Model["AMLGraphNet GCN<br/>(model.py)"]
         Weights["Checkpoint Weights<br/>(aml_gcn_model.pth)"]
     end
 
     %% Backend Section
-    subgraph Backend Services (FastAPI)
+    subgraph backend_services ["Backend Services (FastAPI)"]
         API["FastAPI Web Server<br/>(app.py)"]
         PredictAnomaly["/predict_anomaly Endpoint"]
         PredictTx["/predict_transactions Endpoint"]
     end
 
     %% Frontend Section
-    subgraph Interactive Frontend (React)
+    subgraph interactive_frontend ["Interactive Frontend (React)"]
         Vite["Vite Dev Server / Static Assets"]
         UI["React Web Dashboard<br/>(App.jsx)"]
         Force["Interactive Force-Directed Layout<br/>(SVG-based Network Visualization)"]
