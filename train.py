@@ -49,8 +49,8 @@ def train_model(args):
         print("WARNING: Zero illicit nodes in training mask. Applying default weights.")
         class_weights = torch.tensor([1.0, 10.0], dtype=torch.float, device=device)
     else:
-        weight_licit = total_train / (2.0 * num_licit)
-        weight_illicit = total_train / (2.0 * num_illicit)
+        weight_licit = total_train / (2.0 * max(num_licit, 1))
+        weight_illicit = total_train / (2.0 * max(num_illicit, 1))
         class_weights = torch.tensor([weight_licit, weight_illicit], dtype=torch.float, device=device)
         
     print(f"Training Class Counts: Licit={num_licit}, Illicit={num_illicit}")
@@ -108,10 +108,21 @@ def train_model(args):
     print("\nDetailed Classification Report:")
     print(classification_report(targets, preds, target_names=['Licit (0)', 'Illicit (1)'], zero_division=0))
     
+    # Construct global node stats map for dynamic inference lookup
+    node_stats = {
+        node_id: [
+            builder.node_in_degree[idx],
+            builder.node_out_degree[idx],
+            builder.node_amount_sent[idx],
+            builder.node_amount_received[idx]
+        ] for node_id, idx in builder.node_to_idx.items()
+    }
+    
     # 7. Save model checkpoint
     checkpoint = {
         'model_state_dict': model.state_dict(),
         'node_to_idx': builder.node_to_idx,
+        'node_stats': node_stats,
         'in_channels': in_channels,
         'hidden_channels': args.hidden_channels,
         'out_channels': 2,
@@ -125,7 +136,7 @@ def train_model(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Relational GNN Anomaly/AML Detection Trainer")
-    parser.add_argument("--data_path", type=str, default="d:/AML/dataset/HI-Small_Trans.csv", help="Path to raw transaction log CSV")
+    parser.add_argument("--data_path", type=str, default="dataset/HI-Small_Trans.csv", help="Path to raw transaction log CSV")
     parser.add_argument("--chunk_size", type=int, default=200000, help="Pandas reading chunk size")
     parser.add_argument("--max_rows", type=int, default=None, help="Limit number of rows to ingest for quick runs")
     parser.add_argument("--epochs", type=int, default=20, help="Number of training epochs")

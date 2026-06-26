@@ -82,16 +82,33 @@ function App() {
     setError("");
     setLoading(true);
     try {
-      const parsedTransactions = JSON.parse(jsonText);
+      let parsedTransactions;
+      try {
+        parsedTransactions = JSON.parse(jsonText);
+      } catch (jsonErr) {
+        throw new Error(`JSON Parsing Error: ${jsonErr.message}. Please verify your transaction array format.`);
+      }
 
-      const response = await fetch(`${API_BASE}/predict_transactions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transactions: parsedTransactions })
-      });
+      let response;
+      try {
+        response = await fetch(`${API_BASE}/predict_transactions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transactions: parsedTransactions })
+        });
+      } catch (netErr) {
+        throw new Error(`Network Connection Failed: Cannot reach GNN backend. Please ensure the backend server is running and accessible (Error: ${netErr.message})`);
+      }
 
       if (!response.ok) {
-        throw new Error(`Server returned code ${response.status}: ${response.statusText}`);
+        let serverError = "";
+        try {
+          const errData = await response.json();
+          serverError = errData.detail || response.statusText;
+        } catch {
+          serverError = response.statusText;
+        }
+        throw new Error(`Server Error (${response.status}): ${serverError}`);
       }
 
       const data = await response.json();
@@ -164,7 +181,7 @@ function App() {
         setSelectedNode(nodes[0]);
       }
     } catch (e) {
-      setError(e.message || "Invalid JSON syntax. Please verify your transaction array format.");
+      setError(e.message || "An unexpected error occurred during prediction evaluation.");
     } finally {
       setLoading(false);
     }

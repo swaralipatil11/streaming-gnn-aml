@@ -60,7 +60,7 @@ graph TD
 
 ## 🧠 Technical Overview & Deep-Dive
 
-### 1. Relational Graph Convolutional Network ([model.py](file:///d:/AML/model.py))
+### 1. Relational Graph Convolutional Network ([model.py](model.py))
 The core learning engine is standard-built as **`AMLGraphNet`** using PyTorch Geometric:
 *   **2-Hop Neighborhood Aggregation**: Two sequential `GCNConv` message-passing layers capture relationships across 2-hop neighborhoods (e.g., Bank A $\rightarrow$ Bank B $\rightarrow$ Bank C). This enables detecting structured loop topologies or distributed fan-out patterns typical of money laundering.
 *   **Features Matrix (`x` shape: `[num_nodes, 5]`)**: 
@@ -72,18 +72,18 @@ The core learning engine is standard-built as **`AMLGraphNet`** using PyTorch Ge
 *   **Log-Softmax Classifier**: Outputs log probabilities of binary labels (`Licit` or `Illicit`).
 *   **Weighted Loss Minimization**: Employs Negative Log-Likelihood Loss (`NLLLoss`) with inverse frequency class weights to address highly imbalanced real-world financial transaction logs.
 
-### 2. Stream Ingestion Pipeline ([dataset.py](file:///d:/AML/dataset.py))
+### 2. Stream Ingestion Pipeline ([dataset.py](dataset.py))
 *   Uses **`StreamGraphBuilder`** to read large-scale raw transaction CSV files in configurable chunk sizes (e.g., 200,000 lines) using pandas.
 *   Maintains a persistent registry mapping string/hex transaction account identifiers deterministically to continuous indices.
 *   Outputs a unified PyTorch Geometric `Data` structure representing the generated transaction network graph.
 
-### 3. FastAPI Inference Engine ([app.py](file:///d:/AML/app.py))
-*   Loads checkpoint weights on lifespan startup.
+### 3. FastAPI Inference Engine ([app.py](app.py))
+*   Loads checkpoint weights and the global historical node statistics registry (`node_stats`) on lifespan startup.
 *   Hosts two inference routes:
     *   `/predict_anomaly`: Accepts low-level pre-processed tensors (`x` and `edge_index`).
-    *   `/predict_transactions`: Accepts streaming batch JSON transaction packets, builds a local subgraph on the fly, computes node feature engineering, runs 2-hop GCN inference, and returns account risk predictions.
+    *   `/predict_transactions`: Accepts streaming batch JSON transaction packets, builds a local subgraph on the fly, combines local batch statistics with historical global statistics (to prevent training-to-serving feature distribution shifts), runs 2-hop GCN inference, and returns account risk predictions.
 
-### 4. Interactive Client Console ([App.jsx](file:///d:/AML/frontend/src/App.jsx))
+### 4. Interactive Client Console ([App.jsx](frontend/src/App.jsx))
 *   Built using **React** and **Vite**.
 *   Implements a custom **Force-Directed Layout Engine** using custom spring attractions and repulsion gravity to spread nodes dynamically in real time.
 *   Provides telemetry metrics (GCN probabilities, Transaction Outflow/Inflow, Bank IDs) in a responsive panel.
@@ -119,14 +119,14 @@ cd ..
 
 ### 2. Model Training
 
-Train the model and save weight checkpoints using [train.py](file:///d:/AML/train.py):
+Train the model and save weight checkpoints using [train.py](train.py):
 
 ```bash
 # Run a quick training loop (100k rows, 5 epochs) to generate aml_gcn_model.pth
 python train.py --max_rows 100000 --epochs 5 --save_path aml_gcn_model.pth --cpu
 
 # Run a full training loop on custom datasets
-python train.py --data_path "d:/AML/dataset/HI-Small_Trans.csv" --epochs 20 --lr 0.01 --hidden_channels 64 --dropout 0.3 --save_path aml_gcn_model.pth
+python train.py --data_path "dataset/HI-Small_Trans.csv" --epochs 20 --lr 0.01 --hidden_channels 64 --dropout 0.3 --save_path aml_gcn_model.pth
 ```
 
 ---
@@ -175,7 +175,7 @@ python test_pipeline.py
 
 ### 6. Containerization (Docker Compose)
 
-The backend service is containerized using [Dockerfile](file:///d:/AML/Dockerfile) and [docker-compose.yml](file:///d:/AML/docker-compose.yml):
+The backend service is containerized using [Dockerfile](Dockerfile) and [docker-compose.yml](docker-compose.yml):
 
 ```bash
 # Build the Docker image

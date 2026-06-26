@@ -164,12 +164,20 @@ class StreamGraphBuilder:
         
         # Create PyG Data object
         data = Data(x=x_tensor, edge_index=edge_index_tensor, edge_attr=edge_attr_tensor, y=y_tensor)
+        
+        # Save node statistics as attributes for external access (e.g. during training checkpointing)
+        self.node_in_degree = node_in_degree
+        self.node_out_degree = node_out_degree
+        self.node_amount_sent = node_amount_sent
+        self.node_amount_received = node_amount_received
+        self.node_is_laundering = node_is_laundering
+        
         return data
 
 if __name__ == "__main__":
     # Quick debug run
     import sys
-    path = "d:/AML/dataset/HI-Small_Trans.csv"
+    path = "dataset/HI-Small_Trans.csv"
     builder = StreamGraphBuilder(path)
     data = builder.build_graph(max_rows=10000)
     print("Graph Info:")

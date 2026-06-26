@@ -36,6 +36,7 @@ model = None
 in_channels = 5
 hidden_channels = 64
 node_to_idx = {}
+node_stats = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -43,7 +44,7 @@ async def lifespan(app: FastAPI):
     Lifespan context manager that loads the GNN model weights
     from disk during startup.
     """
-    global model, node_to_idx, in_channels, hidden_channels
+    global model, node_to_idx, node_stats, in_channels, hidden_channels
     checkpoint_path = "aml_gcn_model.pth"
     
     if os.path.exists(checkpoint_path):
@@ -53,12 +54,13 @@ async def lifespan(app: FastAPI):
             in_channels = checkpoint['in_channels']
             hidden_channels = checkpoint['hidden_channels']
             node_to_idx = checkpoint.get('node_to_idx', {})
+            node_stats = checkpoint.get('node_stats', {})
             
             from model import AMLGraphNet
             model = AMLGraphNet(in_channels=in_channels, hidden_channels=hidden_channels)
             model.load_state_dict(checkpoint['model_state_dict'])
             model.eval()
-            print("Model and node mapping loaded successfully.")
+            print("Model, node mapping, and statistics loaded successfully.")
         except Exception as e:
             print(f"Error loading model weights: {e}. Running with uninitialized model.")
             from model import AMLGraphNet
@@ -92,27 +94,6 @@ app.add_middleware(
 )
 
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-
-# Serve static React frontend files if they are built
-dist_dir = "frontend/dist"
-if os.path.exists(dist_dir):
-    app.mount("/assets", StaticFiles(directory=os.path.join(dist_dir, "assets")), name="assets")
-    
-    @app.get("/")
-    async def serve_index():
-        """Serves the interactive GNN React Dashboard UI."""
-        return FileResponse(os.path.join(dist_dir, "index.html"))
-else:
-    @app.get("/")
-    def read_root():
-        """Fallback API status check when frontend build is not found."""
-        return {
-            "status": "online",
-            "model_loaded": model is not None,
-            "nodes_registered_in_registry": len(node_to_idx),
-            "message": "React frontend built folder not found. Run 'npm run build' inside the 'frontend' folder to serve the visual dashboard."
-        }
 
 @app.post("/predict_anomaly", response_model=AnomalyResponse)
 async def predict_anomaly(req: AnomalyRequest):
@@ -195,12 +176,17 @@ async def predict_transactions(req: TransactionBatchRequest):
             amount_received[dst_idx] += tx.amount
             
         # 3. Create node features (scaled with log1p for stability)
+        # We combine batch stats with global historical stats loaded from the checkpoint to prevent feature shift
         x_features = []
         for idx in range(num_nodes):
-            in_deg = in_degree[idx]
-            out_deg = out_degree[idx]
-            sent = amount_sent[idx]
-            recv = amount_received[idx]
+            acc_id = unique_accounts[idx]
+            # Lookup historical stats (default to 0 if node is new)
+            hist_in_deg, hist_out_deg, hist_sent, hist_recv = node_stats.get(acc_id, [0, 0, 0.0, 0.0])
+            
+            in_deg = hist_in_deg + in_degree[idx]
+            out_deg = hist_out_deg + out_degree[idx]
+            sent = hist_sent + amount_sent[idx]
+            recv = hist_recv + amount_received[idx]
             
             x_features.append([
                 np.log1p(in_deg),
@@ -233,6 +219,21 @@ async def predict_transactions(req: TransactionBatchRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Transaction batch inference failed: {str(e)}")
+
+# Serve static React frontend files from root if they are built
+dist_dir = "frontend/dist"
+if os.path.exists(dist_dir):
+    app.mount("/", StaticFiles(directory=dist_dir, html=True), name="static")
+else:
+    @app.get("/")
+    def read_root():
+        """Fallback API status check when frontend build is not found."""
+        return {
+            "status": "online",
+            "model_loaded": model is not None,
+            "nodes_registered_in_registry": len(node_to_idx),
+            "message": "React frontend built folder not found. Run 'npm run build' inside the 'frontend' folder to serve the visual dashboard."
+        }
 
 if __name__ == "__main__":
     import uvicorn
