@@ -44,6 +44,11 @@ function App() {
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const requestRef = useRef();
 
+  // Async Task state
+  const [isAsync, setIsAsync] = useState(false);
+  const [asyncTaskId, setAsyncTaskId] = useState(null);
+  const [asyncTaskStatus, setAsyncTaskStatus] = useState("");
+
   // Determine backend URL dynamically. If running in Vite dev server (5173), query port 8000.
   const API_BASE = window.location.port === "5173" ? "http://127.0.0.1:8000" : "";
 
@@ -77,10 +82,109 @@ function App() {
     setJsonText(JSON.stringify(TEMPLATES[name], null, 2));
   };
 
-  // Run GNN Prediction
+  // Polls task status for async predictions
+  const pollTaskStatus = (taskId, parsedTransactions) => {
+    setAsyncTaskId(taskId);
+    setAsyncTaskStatus("PENDING");
+    
+    const intervalId = setInterval(async () => {
+      try {
+        const response = await fetch(`${API_BASE}/task_status/${taskId}`);
+        if (!response.ok) {
+          clearInterval(intervalId);
+          throw new Error(`Failed to check task status: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        setAsyncTaskStatus(data.status);
+        
+        if (data.status === "COMPLETED") {
+          clearInterval(intervalId);
+          setLoading(false);
+          const results = data.result;
+          setPredictions(results);
+          
+          // Construct Graph Nodes and Links from inputs
+          const nodeMap = new Map();
+          const links = [];
+          
+          parsedTransactions.forEach((tx) => {
+            const src = `${tx.from_bank}_${tx.from_account}`;
+            const dst = `${tx.to_bank}_${tx.to_account}`;
+            
+            if (!nodeMap.has(src)) {
+              nodeMap.set(src, {
+                id: src,
+                bank: tx.from_bank,
+                account: tx.from_account,
+                amount_sent: 0,
+                amount_received: 0,
+                out_degree: 0,
+                in_degree: 0
+              });
+            }
+            if (!nodeMap.has(dst)) {
+              nodeMap.set(dst, {
+                id: dst,
+                bank: tx.to_bank,
+                account: tx.to_account,
+                amount_sent: 0,
+                amount_received: 0,
+                out_degree: 0,
+                in_degree: 0
+              });
+            }
+            
+            nodeMap.get(src).amount_sent += tx.amount;
+            nodeMap.get(src).out_degree += 1;
+            nodeMap.get(dst).amount_received += tx.amount;
+            nodeMap.get(dst).in_degree += 1;
+            
+            links.push({
+              source: src,
+              target: dst,
+              amount: tx.amount,
+              format: tx.payment_format
+            });
+          });
+          
+          const nodes = Array.from(nodeMap.values()).map((node) => {
+            const isIllicit = results.predictions[node.id] === 1;
+            const prob = results.probabilities[node.id] || 0.0;
+            return {
+              ...node,
+              is_illicit: isIllicit,
+              probability: prob,
+              x: 300 + (Math.random() - 0.5) * 100,
+              y: 200 + (Math.random() - 0.5) * 100,
+              vx: 0,
+              vy: 0
+            };
+          });
+          
+          setGraphData({ nodes, links });
+          if (nodes.length > 0) {
+            setSelectedNode(nodes[0]);
+          }
+        } else if (data.status === "FAILED") {
+          clearInterval(intervalId);
+          setLoading(false);
+          setError(data.result?.error || "GNN background inference execution task failed.");
+        }
+      } catch (err) {
+        clearInterval(intervalId);
+        setLoading(false);
+        setError(err.message || "Error polling task status.");
+      }
+    }, 800);
+  };
+
+  // Run GNN Prediction (supports sync and async modes)
   const runPrediction = async () => {
     setError("");
     setLoading(true);
+    setAsyncTaskId(null);
+    setAsyncTaskStatus("");
     try {
       let parsedTransactions;
       try {
@@ -89,100 +193,127 @@ function App() {
         throw new Error(`JSON Parsing Error: ${jsonErr.message}. Please verify your transaction array format.`);
       }
 
-      let response;
-      try {
-        response = await fetch(`${API_BASE}/predict_transactions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ transactions: parsedTransactions })
-        });
-      } catch (netErr) {
-        throw new Error(`Network Connection Failed: Cannot reach GNN backend. Please ensure the backend server is running and accessible (Error: ${netErr.message})`);
-      }
-
-      if (!response.ok) {
-        let serverError = "";
+      if (isAsync) {
+        let response;
         try {
-          const errData = await response.json();
-          serverError = errData.detail || response.statusText;
-        } catch {
-          serverError = response.statusText;
-        }
-        throw new Error(`Server Error (${response.status}): ${serverError}`);
-      }
-
-      const data = await response.json();
-      setPredictions(data);
-
-      // Construct Graph Nodes and Links from inputs
-      const nodeMap = new Map();
-      const links = [];
-
-      parsedTransactions.forEach((tx) => {
-        const src = `${tx.from_bank}_${tx.from_account}`;
-        const dst = `${tx.to_bank}_${tx.to_account}`;
-
-        if (!nodeMap.has(src)) {
-          nodeMap.set(src, {
-            id: src,
-            bank: tx.from_bank,
-            account: tx.from_account,
-            amount_sent: 0,
-            amount_received: 0,
-            out_degree: 0,
-            in_degree: 0
+          response = await fetch(`${API_BASE}/predict_transactions_async`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ transactions: parsedTransactions })
           });
+        } catch (netErr) {
+          throw new Error(`Network Connection Failed: Cannot reach GNN backend. Please ensure the backend server is running and accessible (Error: ${netErr.message})`);
         }
-        if (!nodeMap.has(dst)) {
-          nodeMap.set(dst, {
-            id: dst,
-            bank: tx.to_bank,
-            account: tx.to_account,
-            amount_sent: 0,
-            amount_received: 0,
-            out_degree: 0,
-            in_degree: 0
+
+        if (!response.ok) {
+          let serverError = "";
+          try {
+            const errData = await response.json();
+            serverError = errData.detail || response.statusText;
+          } catch {
+            serverError = response.statusText;
+          }
+          throw new Error(`Server Error (${response.status}): ${serverError}`);
+        }
+
+        const data = await response.json();
+        pollTaskStatus(data.task_id, parsedTransactions);
+      } else {
+        let response;
+        try {
+          response = await fetch(`${API_BASE}/predict_transactions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ transactions: parsedTransactions })
           });
+        } catch (netErr) {
+          throw new Error(`Network Connection Failed: Cannot reach GNN backend. Please ensure the backend server is running and accessible (Error: ${netErr.message})`);
         }
 
-        // Aggregate locally
-        nodeMap.get(src).amount_sent += tx.amount;
-        nodeMap.get(src).out_degree += 1;
+        if (!response.ok) {
+          let serverError = "";
+          try {
+            const errData = await response.json();
+            serverError = errData.detail || response.statusText;
+          } catch {
+            serverError = response.statusText;
+          }
+          throw new Error(`Server Error (${response.status}): ${serverError}`);
+        }
 
-        nodeMap.get(dst).amount_received += tx.amount;
-        nodeMap.get(dst).in_degree += 1;
+        const data = await response.json();
+        setPredictions(data);
 
-        links.push({
-          source: src,
-          target: dst,
-          amount: tx.amount,
-          format: tx.payment_format
+        // Construct Graph Nodes and Links from inputs
+        const nodeMap = new Map();
+        const links = [];
+
+        parsedTransactions.forEach((tx) => {
+          const src = `${tx.from_bank}_${tx.from_account}`;
+          const dst = `${tx.to_bank}_${tx.to_account}`;
+
+          if (!nodeMap.has(src)) {
+            nodeMap.set(src, {
+              id: src,
+              bank: tx.from_bank,
+              account: tx.from_account,
+              amount_sent: 0,
+              amount_received: 0,
+              out_degree: 0,
+              in_degree: 0
+            });
+          }
+          if (!nodeMap.has(dst)) {
+            nodeMap.set(dst, {
+              id: dst,
+              bank: tx.to_bank,
+              account: tx.to_account,
+              amount_sent: 0,
+              amount_received: 0,
+              out_degree: 0,
+              in_degree: 0
+            });
+          }
+
+          // Aggregate locally
+          nodeMap.get(src).amount_sent += tx.amount;
+          nodeMap.get(src).out_degree += 1;
+
+          nodeMap.get(dst).amount_received += tx.amount;
+          nodeMap.get(dst).in_degree += 1;
+
+          links.push({
+            source: src,
+            target: dst,
+            amount: tx.amount,
+            format: tx.payment_format
+          });
         });
-      });
 
-      // Hydrate predictions
-      const nodes = Array.from(nodeMap.values()).map((node) => {
-        const isIllicit = data.predictions[node.id] === 1;
-        const prob = data.probabilities[node.id] || 0.0;
-        return {
-          ...node,
-          is_illicit: isIllicit,
-          probability: prob,
-          // Position initial state (centered)
-          x: 300 + (Math.random() - 0.5) * 100,
-          y: 200 + (Math.random() - 0.5) * 100,
-          vx: 0,
-          vy: 0
-        };
-      });
+        // Hydrate predictions
+        const nodes = Array.from(nodeMap.values()).map((node) => {
+          const isIllicit = data.predictions[node.id] === 1;
+          const prob = data.probabilities[node.id] || 0.0;
+          return {
+            ...node,
+            is_illicit: isIllicit,
+            probability: prob,
+            // Position initial state (centered)
+            x: 300 + (Math.random() - 0.5) * 100,
+            y: 200 + (Math.random() - 0.5) * 100,
+            vx: 0,
+            vy: 0
+          };
+        });
 
-      setGraphData({ nodes, links });
-      if (nodes.length > 0) {
-        setSelectedNode(nodes[0]);
+        setGraphData({ nodes, links });
+        if (nodes.length > 0) {
+          setSelectedNode(nodes[0]);
+        }
+        setLoading(false);
       }
     } catch (e) {
       setError(e.message || "An unexpected error occurred during prediction evaluation.");
-    } finally {
       setLoading(false);
     }
   };
@@ -369,8 +500,30 @@ function App() {
               />
             </div>
             {error && <div className="error-message">{error}</div>}
+            
+            {/* Asynchronous Queue Toggler */}
+            <div className="ingest-mode-toggle" style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.75rem", margin: "0.25rem 0" }}>
+              <input
+                type="checkbox"
+                id="async-toggle"
+                checked={isAsync}
+                onChange={(e) => setIsAsync(e.target.checked)}
+                style={{ cursor: "pointer" }}
+              />
+              <label htmlFor="async-toggle" style={{ cursor: "pointer", fontWeight: "600", color: "var(--text-secondary)" }}>
+                Enable Asynchronous Task Queue
+              </label>
+            </div>
+
+            {asyncTaskId && (
+              <div className="async-status-bar" style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.7rem", padding: "0.5rem", background: "rgba(30, 41, 59, 0.4)", borderRadius: "8px", border: "1px solid var(--border-color)", color: "var(--text-secondary)" }}>
+                <div>Task ID: <strong style={{ fontFamily: "monospace" }}>{asyncTaskId.substring(0, 16)}...</strong></div>
+                <div>Status: <span style={{ color: asyncTaskStatus === "COMPLETED" ? "#10B981" : asyncTaskStatus === "FAILED" ? "#EF4444" : "#FBBF24", fontWeight: "bold" }}>{asyncTaskStatus}</span></div>
+              </div>
+            )}
+
             <button className="btn btn-primary" onClick={runPrediction} disabled={loading}>
-              {loading ? "Evaluating GNN Graph..." : "Analyze Transaction Network"}
+              {loading ? (asyncTaskId ? `Queueing: ${asyncTaskStatus}...` : "Evaluating GAT Graph...") : "Analyze Transaction Network"}
             </button>
           </section>
 
@@ -689,11 +842,11 @@ function App() {
       {/* VIEW 3: MODEL TELEMETRY & EXPLAINABLE AI (XAI) */}
       {activeTab === "telemetry" && (
         <div className="telemetry-grid">
-          {/* Card 1: GNN Layer Graph Convolution Architecture */}
+          {/* Card 1: GNN Layer Graph Attention Architecture */}
           <div className="telemetry-card">
-            <h3>🧠 Relational GCN Architecture</h3>
+            <h3>🧠 Relational GAT Architecture</h3>
             <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-              Detailed topological layers of <strong>AMLGraphNet</strong>. The network propagates features across local subgraphs utilizing 2 convolutions.
+              Detailed topological layers of <strong>AMLGraphNet (GAT)</strong>. The network propagates node features across local subgraphs utilizing 2 attention layers powered by edge attributes.
             </p>
 
             <div className="arch-node">
@@ -708,8 +861,8 @@ function App() {
 
             <div className="arch-node">
               <div>
-                <div className="arch-node-title">GCN Layer 1 (GCNConv)</div>
-                <div className="arch-node-desc">1-hop convolution mapping: 5 to 64 channels</div>
+                <div className="arch-node-title">GAT Layer 1 (GATConv)</div>
+                <div className="arch-node-desc">1-hop attention: 5 to 64 channels (8 heads, edge_dim=9)</div>
               </div>
               <span className="badge" style={{ backgroundColor: "#2563EB" }}>Weight Conv1</span>
             </div>
@@ -718,8 +871,8 @@ function App() {
 
             <div className="arch-node">
               <div>
-                <div className="arch-node-title">GCN Layer 2 (GCNConv)</div>
-                <div className="arch-node-desc">2-hop convolution mapping: 64 to 64 channels</div>
+                <div className="arch-node-title">GAT Layer 2 (GATConv)</div>
+                <div className="arch-node-desc">2-hop attention: 512 to 64 channels (1 head, edge_dim=9)</div>
               </div>
               <span className="badge" style={{ backgroundColor: "#7C3AED" }}>Weight Conv2</span>
             </div>

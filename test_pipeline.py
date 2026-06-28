@@ -138,6 +138,36 @@ def run_integration_test():
         assert "456_ACC_B" in data["predictions"]
         assert "789_ACC_C" in data["predictions"]
         
+        # 4. Test predict_transactions_async and task_status Endpoint (Asynchronous Queue)
+        print("\nChecking Asynchronous Endpoints...")
+        async_response = requests.post(f"{base_url}/predict_transactions_async", json=transaction_payload)
+        print(f"Status: {async_response.status_code}")
+        assert async_response.status_code == 202
+        async_data = async_response.json()
+        print(f"Response: {async_data}")
+        assert "task_id" in async_data
+        task_id = async_data["task_id"]
+        
+        # Poll status
+        completed = False
+        for _ in range(10):
+            time.sleep(0.5)
+            status_response = requests.get(f"{base_url}/task_status/{task_id}")
+            assert status_response.status_code == 200
+            status_data = status_response.json()
+            print(f"Polling status: {status_data['status']}")
+            if status_data["status"] == "COMPLETED":
+                completed = True
+                assert "result" in status_data
+                assert "predictions" in status_data["result"]
+                assert "123_ACC_A" in status_data["result"]["predictions"]
+                break
+            elif status_data["status"] == "FAILED":
+                print("Task failed:", status_data["result"])
+                break
+                
+        assert completed is True
+        
         print("\n=== INTEGRATION TESTS PASSED SUCCESSFULLY ===")
         
     except AssertionError as e:

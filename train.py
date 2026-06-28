@@ -57,11 +57,13 @@ def train_model(args):
     print(f"Computed Class Weights: Licit={class_weights[0].item():.4f}, Illicit={class_weights[1].item():.4f}")
     
     # 4. Instantiate model & optimizer
+    edge_dim = data.edge_attr.size(1) if hasattr(data, 'edge_attr') and data.edge_attr is not None else 9
     model = AMLGraphNet(
         in_channels=in_channels,
         hidden_channels=args.hidden_channels,
         out_channels=2,
-        dropout=args.dropout
+        dropout=args.dropout,
+        edge_dim=edge_dim
     ).to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -73,7 +75,7 @@ def train_model(args):
         optimizer.zero_grad()
         
         # Forward pass
-        out = model(data.x, data.edge_index)
+        out = model(data.x, data.edge_index, edge_attr=data.edge_attr)
         
         # Loss calculation (applying penalized class weights directly in NLL loss)
         loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask], weight=class_weights)
@@ -92,7 +94,7 @@ def train_model(args):
     print("\nEvaluating model on test set...")
     model.eval()
     with torch.no_grad():
-        out = model(data.x, data.edge_index)
+        out = model(data.x, data.edge_index, edge_attr=data.edge_attr)
         preds = out[data.test_mask].argmax(dim=1).cpu().numpy()
         targets = data.y[data.test_mask].cpu().numpy()
         
@@ -127,6 +129,7 @@ def train_model(args):
         'hidden_channels': args.hidden_channels,
         'out_channels': 2,
         'dropout': args.dropout,
+        'edge_dim': edge_dim,
         'class_weights': class_weights.cpu().numpy().tolist()
     }
     

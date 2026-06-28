@@ -4,6 +4,8 @@ import torch
 from torch_geometric.data import Data
 from collections import defaultdict
 
+PAYMENT_FORMATS = ['Reinvestment', 'Cheque', 'Credit Card', 'ACH', 'Cash', 'Wire', 'Bitcoin']
+
 class StreamGraphBuilder:
     """
     StreamGraphBuilder reads a massive transaction log CSV in chunks,
@@ -14,7 +16,7 @@ class StreamGraphBuilder:
         self.filepath = filepath
         self.chunksize = chunksize
         self.node_to_idx = {}
-        self.payment_formats = ['Reinvestment', 'Cheque', 'Credit Card', 'ACH', 'Cash', 'Wire', 'Bitcoin']
+        self.payment_formats = PAYMENT_FORMATS
         self.format_to_idx = {fmt: idx for idx, fmt in enumerate(self.payment_formats)}
 
     def build_graph(self, max_rows: int = None) -> Data:
